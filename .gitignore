@@ -1,0 +1,7 @@
+.DS_Store
+.direnv
+__pycache__
+apriltag-imgs
+/*.mov
+.envrc
+.vscode
