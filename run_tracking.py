@@ -39,12 +39,6 @@ while(True):
     markers = at_detector.detect(img, True, cam.apriltag_params, TRACKING_TAG_SIZE)
     detect_end = time.time()
     for m in markers:
-        # print("==============")
-        # print("sending rotation")
-        # print(m.pose_R)
-        if m.tag_id == 0:
-            print("===========")
-            print(m.pose_t)
         # the OSCCore C# library has a bug, where it skips the first argument if you have 3, so we
         # add a dummy argument here to work around it.
         osc.send_message(f'/{cam.name}/marker/{m.tag_id}/position', m.pose_t.ravel().tolist() + [0])
