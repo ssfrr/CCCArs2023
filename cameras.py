@@ -4,6 +4,7 @@ import numpy as np
 from os.path import isfile
 import logging
 logger = logging.getLogger(__name__)
+# disabled logger and switched to print because it wasn't coming out for some reason
 
 
 CAMERA_SERIALS = {
@@ -29,11 +30,11 @@ class PylonCamera:
     # only call after self.model and self.name have been set
     def _load_apriltag_params(self):
         if isfile(self.param_file):
-            logger.info(f'Loading camera parameters from {self.param_file}')
+            print(f'Loading camera parameters from {self.param_file}')
             params = np.load(self.param_file)
             return params['mtx'][[0,1,0,1], [0,1,2,2]]
         else:
-            logger.warning("No camera calibration found, using estimated parameters")
+            print("No camera calibration found, using estimated parameters")
             # hard-coded estimate based on lens focal length and sensor size
             return estimate_camera_intrinsics([6.9, 5.5], [1280, 1024], 3.5)
 
@@ -42,7 +43,7 @@ class PylonCamera:
         try:
             if res.GrabSucceeded():
                 return res.Array.copy()
-            logger.warning("Camera grab failed")
+            print("Camera grab failed")
             return None
         finally:
             res.Release()
@@ -88,9 +89,9 @@ def calibrate(cam, chessboard_squares):
             found, corners = cv2.findChessboardCorners(img, chessboard_squares, None)
             if found:
                 calib_images.append((img, corners))
-                logger.info(f'{len(calib_images)} frames captured')
+                print(f'{len(calib_images)} frames captured')
             else:
-                logger.warning("No chessboard found in image")
+                print("No chessboard found in image")
         elif key_pressed & 0xff == ord('q'):
             break
 
@@ -124,7 +125,7 @@ def calibrate(cam, chessboard_squares):
     ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, img.shape[::-1],None,None)
     if ret:
         np.savez(cam.param_file, mtx=mtx, dist=dist, rvecs=rvecs, tvecs=tvecs)
-        logger.info(f'wrote {cam.param_file}')
+        print(f'wrote {cam.param_file}')
 
     else:
-        logger.error("Calibration failed")
+        print("Calibration failed")

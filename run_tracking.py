@@ -6,6 +6,7 @@ import time
 from pupil_apriltags import Detector
 from pythonosc import udp_client
 import logging
+from dataclasses import dataclass
 
 from cameras import PylonCamera, MacBookCamera
 
@@ -15,8 +16,107 @@ logger = logging.getLogger(__name__)
 def to_i32(x):
     return np.rint(x).astype(np.int32)
 
+# marker locations relative to the tag origin, which is the center of the tag.
+# These use the AprilTag coordinate system:
+# X-Left, Y-Forward, Z-Down (Right-Handed)
+# The first coordinates are for the front marker, then move clockwise (when
+# looking from above)
+# Note this is not the same as the Unity coordinate system, which is:
+# X-Right, Y-Up, Z-Forward (Left-Handed)
+TAG_GEOM = np.array([[0.0,   -61.75, -7.5],
+                     [61.75,  61.75, -12.5],
+                     [0.0,    61.75, -37.5],
+                     [-61.75, 61.75, -17.5]])
 
-at_detector = Detector(families="tagStandard41h12", quad_decimate=2)
+# multiply apriltag coordinates by this matrix to convert to Unity coordinates
+APRIL_TO_UNITY = np.array([[-1,  0,  0,  0],
+                           [ 0,  0, -1,  0],
+                           [ 0,  1,  0,  0],
+                           [ 0,  0,  0,  1]])
+UNITY_TO_APRIL = np.array([[-1,  0,  0,  0],
+                           [ 0,  0,  1,  0],
+                           [ 0, -1,  0,  0],
+                           [ 0,  0,  0,  1]])
+
+assert all((APRIL_TO_UNITY @ UNITY_TO_APRIL == np.identity(4)).ravel())
+
+# tag IDs we're using, in sorted order
+TAG_IDS = [
+    1,
+]
+
+# @dataclass
+# class TrackerState:
+#     active: dict = dict()
+#     detector: Detector = Detector()
+
+# def run_tracker(camera):
+#     state = TrackerState()
+#     while True:
+#         # get camera image, handle it
+#         pass
+
+
+"""
+Tracking Overview
+
+- grab a frame from the camera
+- preprocess frame (not sure if this helps or hurts AprilTag)
+- for each apriltag found:
+    - if the ID is not one that we're using, discard
+    - maybe skip the following steps if this tag is active and we have a recent position for it
+    - compute the bounding box of the apriltag, and expand by a factor based on
+      the headset geometry
+    - perform contour detection in the expanded bounding box, get contour centroids
+    - perform PnP on the apriltag corners (use SolvePnPGeneric /w SOLVEPNP_IPPE_SQUARE to
+      get both answers if ambiguous)
+    - Using the apriltag pose, project marker locations to image and find the corresponding
+      points from the contour detection.  See below for algo. If there were
+      multiple pose candidates, pick the one with the best fit. It seems like
+      you should be able to do this purely in screen-space coordinates by
+      treating the apriltag edges as basis vectors, but if that's true then I
+      don't know what happens when the pose is ambiguous.
+    - create a Headset object /w screen-space marker and blob coordinates
+    - add the Headset to a dictionary of active Headsets, keyed by the tag ID. This will
+      replace any earlier headsets with the same ID
+- for each active headset:
+    - if we don't already have fresh screen-space coordinates (i.e. this was not a new headset):
+        - find the bounding box of the previous markers
+        - expand the bounding box (by a ratio based on frame rate, physical marker layout size,
+          and max expected velocity)
+        - perform contour tracking within the expanded bounding box
+        - match up the new points with the previous points (see below for algo)
+        - alternatively we could try to track each blob individually by looking in a small
+          region around just that blob, but then it gets more complicated to handle the case
+          where multiple blobs are near each other
+    - now that we have the screen-space coordinates for the blobs (and/or apriltag corners),
+      we can run SolvePnPGeneric to get the 3D pose. Several algorithms require exactly 4 points,
+      some require coplanar and/or square points. This video shows P3P freaking out while
+      AP3P is much more stable: https://www.youtube.com/watch?v=X5h_4okDzyI. This is with
+      a 4-point square tag. The docs for the iterative method say "Initial
+      solution for non-planar "objectPoints" needs at least 6 points", which means that you
+      need 6 points if you are not supplying an initial guess, but after that, 4 points
+      is OK.
+    - send the tag ID and pose to unity over OSC
+
+Finding correspondences between sets of points with a greedy search:
+1. compute the pairwise squared distance matrix.
+2. find the argmin
+3. record the match and error, and set that row and column to Inf
+4. Repeat from step 2 until:
+    - we have all the points
+    - we've run out of points
+    - the distance exceeds some threshold
+
+There's probably a way to avoid searching for the minimum each time by
+pre-sorting once, but this should be very fast with the small numbers of points
+we have.
+"""
+
+# TAG_FAMILY="tag25h9"
+# TAG_FAMILY="tagStandard41h12"
+TAG_FAMILY="tag36h11"
+at_detector = Detector(families=TAG_FAMILY, quad_decimate=2)
 cam = PylonCamera("cam1")
 #cam = MacBookCamera(0)
 TRACKING_TAG_SIZE = 0.05
